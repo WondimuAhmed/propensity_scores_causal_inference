@@ -1,0 +1,675 @@
+---
+  title: "Causal Inference Using Propensity Score Method"
+
+date: "12/20/2021"
+---
+  
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment=NA, warning = FALSE, message = FALSE)
+```
+
+# Introduction
+
+The detrimental effect of peer victimization on academic performance has been well-documented in both educational and psychological research (e.g., Juvonen & Graham, 2014; Nakamoto & Schwartz, 2010). Students who are bullied by their peers are more likely to exhibit lower academic achievement, decreased classroom engagement, and greater school avoidance (e.g., Espelage et al., 2013; Wang et al., 2009).  However, drawing causal conclusions from these associations remains challenging. Randomized controlled trials are not feasible due to ethical constraints, and observational studies are prone to confounding and selection bias. Propensity score methods offer a promising solution by approximating the conditions of randomized experiments (Rosenbaum & Rubin, 1983; Austin, 2011). Yet, an added complexity arises when the exposure of interest—peer victimization—is not directly observed but inferred from multiple indicators. In such cases, latent class analysis can be used to identify subgroups of students with distinct victimization profiles (Lanza et al., 2003; Nylund et al., 2007).  This study integrates these methodological advances to examine how peer victimization patterns affect academic outcomes. Specifically, it aims to: 
+  
+  - Identify latent classes of peer victimization based on students’ self-reported experiences.
+- Apply propensity score weighting to adjust for a rich set of confounders.
+- Evaluate the impact of latent class exposure on students’ performance in mathematics and science.
+
+
+
+```{r load_required_packages, echo=FALSE, include=FALSE}
+if (!requireNamespace("pacman", quietly = TRUE)) install.packages("pacman"); pacman::p_load(tidyverse,psych, DataExplorer, DT, virdis, twang,jtools,cobalt,survey,interflex,lmtest,doParallel,sandwich, reshape2,poLCA ,flextable)
+```
+
+# Methods
+## Data Source
+
+This study utilized [data](https://nces.ed.gov/use-work/resource-library/data/data-file/trends-international-mathematics-and-science-study-timss-2015-u-s-public-use-datafile?pubid=2018021) from the 2015 Trends in International Mathematics and Science Study (TIMSS).  The [U.S. TIMSS sample](https://timssandpirls.bc.edu/publications/timss/2015-methods/T15_MP_Chap5_Sample_Implementation.pdf) comprised 10,221 students, representing over 3.8 million eighth graders nationwide. The dataset included comprehensive background questionnaires capturing students’ school experiences, socio-demographic characteristics, and contextual factors.
+
+
+
+
+```{r read_data, echo=FALSE}
+pv_data <- read.csv("PSM.TIMSS2015.csv") #
+```
+
+
+## Data Preparation 
+The data was cleaned by removing 121 cases with missing peer victimization responses. Key variables were selected, including victimization items, plausible value scores for math and science, and covariates (e.g., age, gender, SES). Categorical variables were recoded as factors. Following Solberg & Olweus (2003), peer victimization items were recoded into two categories based on frequency: 1 = "Never" or "A few times a year", and 2 = "Once or twice a month" or "At least once a week". The analytic sample included students with complete responses on all peer victimization items (10,100). A listwise deletion would reduce the sample size to 8384.Overall, less than 1% of the individual data points across the dataset are missing (see plot below). 
+
+
+```{r selecting_data, echo=FALSE}
+pv_data <- subset(pv_data, PEERVICTMISNG=="0") # 121 cases with missing per victimization vars were eliminated.
+
+# Select peer victimization variables and  theoretically relevant co-variates. Then convert categorical variables [coded numeric in the data] to factors.
+pv_data1 <- pv_data %>%
+  dplyr::select(PEERVICTMD,PEERVICTMDYN, AGE, GENDER, RACE, LANGSPKHOME, SCHCOMPOS, PERCNTLEP, INCOMENEGBR, PCTFRPL, PUBPRIV, SES, INSTMATHRES, INSTSCIENRES,             SCHEMPSUCESS, SCHDIP, TOTALINSHOURS, IDSTUD , IDSCHOOL , PVMATH1, PVSCEINCE1,SCHBELONG, TOTWGT,PV1, PV2, PV3, PV4, PV5, PV6, PV7, PV8, PV9) 
+
+pv_data1 <- pv_data1 %>%
+  mutate(
+    GENDER = as.factor(GENDER),
+    RACE = as.factor(RACE),
+    LANGSPKHOME = as.factor(LANGSPKHOME),
+    SCHCOMPOS = as.factor(SCHCOMPOS),
+    PERCNTLEP = as.factor(PERCNTLEP),
+    INCOMENEGBR = as.factor(INCOMENEGBR),
+    PCTFRPL = as.factor(PCTFRPL),
+    PUBPRIV = as.factor(PUBPRIV)) %>% 
+  filter(!is.na(AGE)) %>% rename(Math_Performance= PVMATH1, Science_Performance=PVSCEINCE1)
+
+# Recode peer victimization item categories: "Never" and "A few times a year" → 1;  "Once or twice a month" and "At least once a week" → 2
+#Recoded based on Solberg, M. E., & Olweus, D. (2003). Prevalence estimation of school bullying with the Olweus Bully/Victim Questionnaire. Aggressive Behavior, 29(3), 239–268. https://doi.org/10.1002/ab.10047
+pv_data1 <- pv_data1 %>%
+  mutate(across(starts_with("PV"), ~ case_when(
+    . %in% c(0,1) ~ 1,
+    . %in% c(2,3) ~ 2,  
+    TRUE ~ NA_real_ 
+  )))
+
+```
+
+
+
+```{r , inspect_and_viz_data,  echo= FALSE}
+# describe data and visualize data structure using a radial plot 
+# psych::describe(pv_data1)
+
+plot_str(pv_data1)
+
+```
+
+```{r missing_data_analysis,results='hide',fig.show='hide', echo= FALSE}
+# Calculate the percentage of missing data for each variable in the dataset.
+missing_percentage <- pv_data1 %>%
+  summarise(
+    across(
+      everything(),
+      ~ mean(is.na(.)) * 100
+    )
+  ) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "percent_missing"
+  ) %>%
+  arrange(desc(percent_missing))
+
+
+# Visualize missing data 
+ggplot(
+  data = missing_percentage,
+  mapping = aes(
+    x = reorder(variable, -percent_missing),
+    y = percent_missing,
+    fill = percent_missing
+  )
+) +
+  geom_bar(stat = "identity") +                                     
+  labs(
+    title = "Missing Data Percentage by Variable",
+    x = "Variables",
+    y = "Missing Percentage (%)"
+  ) +
+  theme_minimal() +                                                  
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  ) +   
+  scale_y_continuous(limits = c(0, 100))
+
+```
+
+
+
+```{r plot-basic-info, echo=FALSE}
+plot_intro(
+  pv_data,
+  geom_label_args = list(),
+  title = "Basic Data Info",
+  ggtheme = theme_gray(),
+  theme_config = list()
+)
+
+```
+
+
+## Measures
+
+### Peer Victimization
+Peer victimization was assessed using 9 items.Each item asked students to report how often other students from their school: _Made fun of me, Left me out of things, Spread lies about me, Stole something from me, Hit or hurt me, Forced me to do things I didn’t want to, Shared embarrassing information about me, Posted embarrassing information online and Threatened me_.  They responded  using a four-point scale: “Never,” “A few times a year,” “Once or twice a month,” and “At least once a week.” Based on Solberg and Olweus (2003), responses were dichotomized to distinguish between students with no/minimal exposure and those with frequent exposure. 
+
+During data screening, items "Posted embarrassing information online" and "Threatened me" were found to have insufficient response variation—no students endorsed experiencing these behaviors at the higher-frequency thresholds. Therefore, these two items were excluded from the latent class analysis. The final analysis was conducted using the remaining seven items. 
+
+### Confounders
+
+The following covariates were included as potential confounders in the propensity score model:  _Age, gender, race/ethnicity, language spoken at home,  School composition, percent of English learners, percent of low-income students, income level of neighborhood, public/private school status, total hours of instruction, school emphasis on academic success, school discipline climate, SES, instructional resources for math and science, and School belonging_. 
+
+
+### Academic Performance
+
+The first plausible value scores in _mathematics_ and _science_  were used as outcome variables. These scores are scaled with a mean of 500 and standard deviation of 100.
+
+
+
+# Analysis 
+
+## Latent Class Analysis
+
+To identify subgroups of students with distinct experiences of peer victimization, we estimated latent class models ranging from 2 to 7 classes using [poLCA package](https://cran.r-project.org/web/packages/poLCA/poLCA.pdf). Model selection was guided by theoretical interpretability and  statistical criteria such as AIC, BIC, ABIC, and CAIC.  Fit indices improved markedly from 2 to 3 classes, with BIC reaching its minimum at the 3-class model (see Figure below). While AIC continued to decline slightly with additional classes, gains were marginal and came at the cost of parsimony. Consequently, a 3-class model was selected as the optimal solution.
+
+
+
+
+```{r latent_class_analysis_models2-7, results='hide',fig.show='hide', echo=FALSE}
+
+# Set a random seed for reproducibility
+set.seed(12202021)
+
+# Remove rows with missing data in selected columns (indicators used in the LCA model) 
+# to ensure complete cases for analysis.
+pv_data1 <- pv_data1[complete.cases(pv_data1[, c(18, 19, 24:32)]), ]
+
+
+myf <- cbind(PV1, PV2, PV3, PV4, PV5, PV6, PV7) ~ 1 
+
+lca2 <- poLCA(myf, data = pv_data1, nclass = 2, maxiter = 500, nrep = 10, na.rm = FALSE, graphs = FALSE)  
+lca3 <- poLCA(myf, data = pv_data1, nclass = 3, maxiter = 500, nrep = 10, na.rm = FALSE, graphs = FALSE)  
+lca4 <- poLCA(myf, data = pv_data1, nclass = 4, maxiter = 500, nrep = 10, na.rm = FALSE, graphs = FALSE)  
+lca5 <- poLCA(myf, data = pv_data1, nclass = 5, maxiter = 500, nrep = 10, na.rm = FALSE, graphs = FALSE)  
+lca6 <- poLCA(myf, data = pv_data1, nclass = 6, maxiter = 500, nrep = 10, na.rm = FALSE, graphs = FALSE)  
+lca7 <- poLCA(myf, data = pv_data1, nclass = 7, maxiter = 500, nrep = 10, na.rm = FALSE, graphs = FALSE) 
+
+```
+
+
+```{r extract_and_consolidate_fit_indicess, results='hide', echo=FALSE}
+# Store all fitted LCA models in a list for efficient iteration
+models <-  list(lca2, lca3, lca4, lca5, lca6, lca7)
+
+# Create dynamic model names to match the models in the list
+model_names <- paste0("lca", 2:7)
+
+# Define a helper function to extract key fit indices from an LCA model
+extract_fit_indices <- function(model, name) {
+  data.frame(
+    model = name,                    
+    parameters = model$npar,             
+    deviance = model$Gsq,               
+    chi_square = model$Chisq,              
+    log_likelihood = model$llik,          
+    df = model$resid.df,                
+    BIC = model$bic,                   
+    AIC = model$aic,                      
+    ABIC = (-2 * model$llik) + ((log((model$N + 2) / 24)) * model$npar),  
+    CAIC = (-2 * model$llik) + model$npar * (1 + log(model$N)),           
+    likelihood_ratio = model$Gsq  
+  )
+}
+
+
+lca_fit_summary <- do.call(rbind, Map(extract_fit_indices, models, model_names))
+
+lca_fit_summary <- lca_fit_summary %>%
+  mutate(across(where(is.numeric), round, digits = 2))
+
+datatable(lca_fit_summary, options = list(dom = 't')) %>%
+  formatStyle(
+    columns = 0,  
+    target = "row",
+    fontWeight = styleRow(2, "bold")  
+  )
+
+```
+
+
+
+```{r visualize_model_fit_across_solutions, echo=FALSE}
+# Rename and convert model names to the number of classes
+lca_fit_summary <- lca_fit_summary %>%
+  mutate(
+    number_of_classes = as.factor(str_replace(model, "lca", ""))
+  ) %>%
+  rename("Number.of.Classes" = number_of_classes)
+
+criteria_data <- lca_fit_summary %>%
+  dplyr::select(Number.of.Classes, BIC, AIC, ABIC, CAIC) %>%
+  pivot_longer(
+    cols = -Number.of.Classes,
+    names_to = "Criteria",
+    values_to = "Value"
+  )
+
+# Plot fit criteria for all models
+plot_fit_criteria <- ggplot(criteria_data, aes(x = Number.of.Classes, y = Value, color = Criteria, group = Criteria)) +
+  geom_line(size = 1) +                         
+  geom_point(size = 2) +                        
+  stat_smooth(method = "loess", se = FALSE) +    
+  labs(
+    title = "Model Fit Criteria Across Latent Classes",
+    x = "Number of Classes",
+    y = "Fit Criterion Value",
+    color = "Criteria"
+  ) +
+  theme_minimal() +                           
+  theme(
+    panel.grid = element_blank(),           
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+plot_fit_criteria
+
+```
+
+The three latent classes are:
+  
+  - _Non-victimized (74%)_: Students in this group had low probabilities of endorsing any form of victimization.
+- _Sometimes Victimized (21%)_: Students in this class showed moderate endorsement of items related to verbal and relational victimization (e.g., "Left Out", "Spread Lies", "Made Fun").
+- _Victimized (5%)_: Students in this group exhibited high probabilities of experiencing multiple types of victimization, particularly more severe forms such as "Hit or Hurt," "Stole From Me," and "Forced Actions."
+
+The figure below shows item-response probabilities across the three latent classes. In the _Non-victimized group_, the likelihood of endorsing any victimization item was minimal-typically below 0.25. In contrast, the _Victimized class_ demonstrated consistently high probabilities (often exceeding 0.75) across nearly all indicators. The _Sometimes Victimized class_ displayed intermediate probabilities, particularly for relational and reputational harm such as being left out or having lies spread about them.
+
+```{r final_3_class_lca_model_reorder_probs,results='hide', echo=FALSE}
+# Reorder the initial class probability estimates based on decreasing class proportions (P)
+# in the preliminary LCA model (lca3) to ensure stable and interpretable class ordering.
+
+set.seed(042121)
+
+probs_start_new <- poLCA.reorder(lca3$probs.start, order(lca3$P, decreasing = TRUE))
+
+# Refit the latent class analysis (LCA) model using the reordered probabilities.
+
+lca3_final <- poLCA(
+  myf,
+  data = pv_data1,
+  nclass = 3,
+  maxiter = 3000,
+  nrep = 10,
+  na.rm = FALSE,
+  graphs = FALSE,
+  probs.start = probs_start_new 
+)
+
+
+# Add the predicted latent classes
+pv_data1 <- cbind(pv_data1, "LatentClass" = lca3_final$predclass)
+```
+
+```{r visualize_class_specific_probs, echo=FALSE}
+
+mylca_model_probs_final <- melt(lca3_final$probs)
+
+# Clean and rename class labels and victimization indicators
+mylca_model_probs_final <- mylca_model_probs_final %>%
+  mutate(
+    Var1 = trimws(Var1),  # Remove trailing spaces
+    Var1 = recode(
+      Var1,
+      "class 1:" = "Victimized",
+      "class 2:" = "Sometimes Victimized",
+      "class 3:" = "Nonvictimized"
+    ),
+    L1 = recode(
+      L1,
+      "PV1" = "Made Fun",
+      "PV2" = "Left Out",
+      "PV3" = "Spread Lies",
+      "PV4" = "Stole From Me",
+      "PV5" = "Hit or Hurt",
+      "PV6" = "Forced Actions",
+      "PV7" = "Shared Embarrassing Info",
+      "PV8" = "Posted Embarrassing Info",
+      "PV9" = "Threatened Me"
+    )
+  )
+
+# Create a stacked bar plot to visualize class-specific response probabilities
+response_prop_plot_final <- ggplot(mylca_model_probs_final, aes(x = Var1, y = value, fill = Var2)) +
+  geom_bar(stat = "identity", position = "stack") +  
+  facet_wrap(~ L1) +                                
+  scale_x_discrete(name = "Latent Class", expand = c(0, 0)) +      
+  scale_y_continuous(name = "Item Probability", expand = c(0, 0)) + 
+  scale_fill_discrete(name = "Response Categories", 
+                      labels = c("1 = NO", "2 = Yes")) +  
+  theme_bw() +                                       
+  labs(title = "Latent Class Analysis of Peer Victimization") + 
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.caption = element_text(hjust = 0),
+    axis.text.x = element_text(angle = 70, hjust = 1, size = 10), 
+    axis.title.y = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 10, face = "bold")
+  )
+
+response_prop_plot_final
+
+```
+
+
+## Propensity Score Analysis 
+
+To estimate the causal effect of peer victimization on academic performance in math and science, we implemented a multinomial propensity score weighting approach using the [twang package](https://cran.r-project.org/web/packages/twang/vignettes/mnps.pdf). The exposure was students’ latent class membership: Victimized, Sometimes Victimized, and Nonvictimized. Propensity scores were estimated using a generalized boosted model with 5,000 trees. The model was optimized using both the effect size mean (es.mean) and the Kolmogorov-Smirnov mean (ks.mean) as stopping criteria.
+
+### Covariate Balance
+
+As shown in Figure 3, covariate balance was assessed across all pairwise class comparisons. Prior to weighting, substantial imbalance was observed for multiple variables—particularly school belonging, SES, and instructional resources. After weighting, covariate balance was substantially improved across all comparisons. Standardized mean differences for nearly all covariates were reduced to below 0.1.  
+
+
+```{r mnps-model, results='hide',fig.show='hide',echo=FALSE}
+
+pv_data1 <- pv_data1 %>%
+  mutate(LatentClass = as.factor(LatentClass)) %>%
+  mutate(LatentClass = recode(
+    LatentClass,
+    "1" = "Vic",
+    "2" = "SomVic",
+    "3"= "NonVic"
+  ))
+pv_data1 <- na.omit(pv_data1 ) # This is only when we want complete case analysis 
+
+# Define the sampling weight variable 
+sampling_weight <- pv_data1$TOTWGT
+
+# Fit a multinomial propensity score model using the 'mnps' function to estimate treatment effects (ATE)
+mnps_pv <- mnps(
+  formula = LatentClass ~ AGE + GENDER + RACE + LANGSPKHOME + SCHCOMPOS + PERCNTLEP + 
+    INCOMENEGBR + PCTFRPL + PUBPRIV + SES + SCHBELONG + INSTMATHRES + INSTSCIENRES + 
+    SCHEMPSUCESS + SCHDIP + TOTALINSHOURS,
+  data = pv_data1, estimand = "ATE", verbose = FALSE, sampw = sampling_weight , stop.method = c("es.mean", "ks.mean"), n.trees = 3000) 
+
+```
+
+
+```{r assess_balance_diagnostics, results='hide',fig.show='hide', echo=FALSE}
+# bal.table(mnps_pv)
+
+plot(mnps_pv)
+```
+
+```{r generate_customized_love_plot,  results='hide',fig.show='hide', echo=FALSE }
+
+# Create a Love Plot to assess covariate balance based on standardized mean differences
+
+balance_plot<- love.plot(bal.tab(mnps_pv, whcih.treat= "null"), var.names = 
+                           c(AGE = "Age",
+                             GENDER_1 = "Gender:Male",
+                             GENDER_2 = "Gender:FeMale",
+                             RACE_1 = "Race:White",
+                             RACE_2 = "Race:Black",
+                             RACE_3 = "Race:Hispanic",
+                             RACE_4 = "Race:Asian",
+                             RACE_5 = "Race:Other",
+                             LANGSPKHOME_1 = "LangSpkHome:Spanish",
+                             LANGSPKHOME_2 = "LangSpkHome:Other",
+                             LANGSPKHOME_3 = "LangSpkHome:English",
+                             SCHCOMPOS_1 = "SchCompos:More Affluent",
+                             SCHCOMPOS_2 = "SchCompos:Middle",
+                             SCHCOMPOS_3 = "SchCompos:Disadvantaged",
+                             PERCNTLEP_1 = "PercntLEP 0%",
+                             PERCNTLEP_2 = "PercntLEP 1-5%",
+                             PERCNTLEP_3 = "PercntLEP 6-10%",
+                             PERCNTLEP_4 = "PercntLEP 11-25%",
+                             PERCNTLEP_5 = "PercntLEP 26-50%",
+                             PERCNTLEP_6 = "PercntLEP 51-75%",
+                             INCOMENEGBR_1 = "IncomeNegr.High",
+                             INCOMENEGBR_2 = "IncomeNegr.Medium",
+                             INCOMENEGBR_3 = "IncomeNegr.Low",
+                             PCTFRPL_1 = "PercntFRPL 0-10%",
+                             PCTFRPL_2 = "PercntFRPL.10-25%",
+                             PCTFRPL_3 = "PercntFRPL.26-50%",
+                             PCTFRPL_4 = "PercntFRPL.51-75%",
+                             PCTFRPL_5 = "PercntFRPL.75-100%",
+                             SES = "SES",
+                             INSTMATHRES = "Math Inst.Resc.Shortage",
+                             INSTSCIENRES = "Science Inst.Resc.Shortage",
+                             SCHEMPSUCESS = "SChEmphasis Success",
+                             SCHBELONG= "SchBelong",
+                             SCHDIP = "SchDiscipline",
+                             TOTALINSHOURS = "Total Instruction Hours",
+                             stat= "mean.diffs" ))
+
+balance_plot
+```
+
+```{r love_plot2,  results='hide',fig.show='hide', echo=FALSE}
+love.plot(mnps_pv, which.treat = .all)
+```
+
+
+
+```{r final_love_plot, echo=FALSE}
+# Generate a balance plot for the mnps model
+balance_plot<- love.plot(bal.tab(mnps_pv, which.treat = .all), var.names = c(AGE = "Age",
+                                                                             GENDER_1 = "Gender: Male",
+                                                                             GENDER_2 = "Gender: Female",
+                                                                             RACE_1 = "Race: White",
+                                                                             RACE_2 = "Race: Black",
+                                                                             RACE_3 = "Race: Hispanic",
+                                                                             RACE_4 = "Race: Asian",
+                                                                             RACE_5 = "Race: Other",
+                                                                             LANGSPKHOME_1 = "Language Spoken at Home: Spanish",
+                                                                             LANGSPKHOME_2 = "Language Spoken at Home: Other",
+                                                                             LANGSPKHOME_3 = "Language Spoken at Home: English",
+                                                                             SCHCOMPOS_1 = "School Composition: More Affluent",
+                                                                             SCHCOMPOS_2 = "School Composition: Middle",
+                                                                             SCHCOMPOS_3 = "School Composition: Disadvantaged",
+                                                                             PERCNTLEP_1 = "Percent LEP: 0%",
+                                                                             PERCNTLEP_2 = "Percent LEP: 1-5%",
+                                                                             PERCNTLEP_3 = "Percent LEP: 6-10%",
+                                                                             PERCNTLEP_4 = "Percent LEP: 11-25%",
+                                                                             PERCNTLEP_5 = "Percent LEP: 26-50%",
+                                                                             PERCNTLEP_6 = "Percent LEP: 51-75%",
+                                                                             INCOMENEGBR_1 = "Income Neighborhood: High",
+                                                                             INCOMENEGBR_2 = "Income Neighborhood: Medium",
+                                                                             INCOMENEGBR_3 = "Income Neighborhood: Low",
+                                                                             PCTFRPL_1 = "Percent FRPL: 0-10%",
+                                                                             PCTFRPL_2 = "Percent FRPL: 10-25%",
+                                                                             PCTFRPL_3 = "Percent FRPL: 26-50%",
+                                                                             PCTFRPL_4 = "Percent FRPL: 51-75%",
+                                                                             PCTFRPL_5 = "Percent FRPL: 75-100%",
+                                                                             SES = "Socioeconomic Status (SES)",
+                                                                             PUBPRIV= "PublicVsPrivate:Private",
+                                                                             INSTMATHRES = "Math Instructional Resources Shortage",
+                                                                             INSTSCIENRES = "Science Instructional Resources Shortage",
+                                                                             SCHEMPSUCESS = "School Emphasis on Success",
+                                                                             SCHBELONG = "School Belonging",
+                                                                             SCHDIP = "School Discipline",
+                                                                             TOTALINSHOURS = "Total Instruction Hours"
+),
+stat = "mean.diffs"
+)
+balance_plot
+
+```
+
+### Survey Design and Weights
+
+To appropriately estimate the causal effects of peer victimization on academic outcomes, we incorporated both propensity score weights and survey design features into our analytic framework. We derived inverse probability of treatment weights from the previously estimated multinomial propensity score model. These weights adjust for baseline differences across victimization groups. To enhance the generalizability of the results, we integrated TIMSS’s complex sampling weights. Then we created a survey design object to  enable accurate estimation of standard errors and population-level inferences.
+
+```{r, echo=FALSE}
+
+
+pv_data1 <- pv_data1 %>%
+  mutate(LatentClass = recode(
+    LatentClass,
+    "Vic" = "Victimized",
+    "SomVic" = "Sometimes Victimized",
+    "NonVic" = "Nonvictimized"
+  ))
+
+pv_data2<- pv_data1
+
+pv_data2$LatentClass <- factor(
+  pv_data2$LatentClass,
+  levels = c("Nonvictimized","Sometimes Victimized", "Victimized" )
+)
+
+# Generate propensity score weights using the mnps model.
+# The weights are calculated with sampling weights included, using the "es.mean" stop method.
+pv_data2$W <- get.weights(mnps_pv, withSampW = TRUE, stop.method = "es.mean")
+
+# Create a survey design object using the propensity score weights.
+# This design object will be used to account for the weights in subsequent analysis.
+my_ps_design <- svydesign(ids = ~1, weights = ~W, data = pv_data2)
+
+pv_data2$LatentClass1 <- as.factor(pv_data2$LatentClass)
+
+```
+
+
+
+## Analysis of Treatment Effects
+
+To estimate the impact of peer victimization on academic outcomes, weighted linear regression models were fitted separately for mathematics and science performance. The models used latent class membership as the key predictor, with the non-victimized group serving as the reference category.
+
+The plot below presents the regression estimates and confidence intervals for each victimization group relative to the non-victimized reference, across both academic domains:
+  
+  - Math Performance (blue, circles): 
+  - Science Performance (orange, squares)
+
+- Students classified as victimized had significantly lower scores in both math and science compared to their non-victimized peers.
+- Their math scores were, on average, approximately 25–30 points lower.
+- Their science scores showed a similarly negative pattern, with an estimated decrease of nearly 30 points.
+- The sometimes victimized group also demonstrated lower academic performance, but the magnitude of these differences was more modest i.e,  Math and science scores for this group were estimated to be 10–15 points lower on average than the non-victimized group.
+
+All estimates were statistically significant based on robust standard errors derived from the survey-weighted regression models.
+
+
+The results confirm a graded relationship between peer victimization and academic performance, with increasing exposure to victimization associated with progressively worse outcomes in both math and science. The visual representation in Figure 5 highlights this trend, showing the most substantial performance decline among the victimized subgroup. These findings provide strong empirical support for the hypothesis that peer victimization undermines cognitive and academic functioning, even after adjusting for a wide range of potential confounders. 
+
+
+```{r estimating-effect-math-performance, echo=FALSE}
+# Fit a survey-weighted linear regression model to examine the relationship between Math Performance and Latent Class,
+
+
+math_performance_reg <- svyglm(Math_Performance ~ as.factor(LatentClass), design = my_ps_design)
+
+coef_table <- summary(math_performance_reg)$coefficients
+
+coef_df <- as.data.frame(coef_table)
+colnames(coef_df) <- c("Estimate", "Std. Error", "t value", "Pr(>|t|)")
+
+# Add a row for significance levels if needed
+coef_df$Significance <- ifelse(coef_df$`Pr(>|t|)` < 0.001, "***",
+                               ifelse(coef_df$`Pr(>|t|)` < 0.01, "**",
+                                      ifelse(coef_df$`Pr(>|t|)` < 0.05, "*", "")))
+
+# Assign new row names
+row.names(coef_df) <- c("Intercept", "Sometimes Victimized", "Victimized")
+
+coef_df <- coef_df %>%
+  rownames_to_column(var = "Predictor") %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+reg_table <-  flextable(coef_df)
+reg_table<- theme_vanilla(reg_table )
+
+# reg_table
+
+```
+
+
+```{r estimating-effect-science-performance, echo=FALSE}
+
+science_performance_reg <- svyglm(Science_Performance ~ as.factor(LatentClass), design = my_ps_design)
+
+coef_table <- summary(science_performance_reg)$coefficients
+
+coef_df <- as.data.frame(coef_table)
+colnames(coef_df) <- c("Estimate", "Std. Error", "t value", "Pr(>|t|)")
+
+# Add a row for significance levels if needed
+coef_df$Significance <- ifelse(coef_df$`Pr(>|t|)` < 0.001, "***",
+                               ifelse(coef_df$`Pr(>|t|)` < 0.01, "**",
+                                      ifelse(coef_df$`Pr(>|t|)` < 0.05, "*", "")))
+
+
+row.names(coef_df) <- c("Intercept", "Sometimes Victimized", "Victimized")
+
+coef_df <- coef_df %>%
+  rownames_to_column(var = "Predictor") %>%
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+reg_table <-  flextable(coef_df)
+reg_table<- theme_vanilla(reg_table )
+
+# reg_table
+
+```
+
+```{r  weighted regression plots, echo=FALSE}
+
+my_reg_plot <- plot_summs(
+  math_performance_reg, 
+  science_performance_reg, 
+  point.size = 20, 
+  line.size = c(3, 5), 
+  coefs = c(
+    "Sometimes Victimized" = "as.factor(LatentClass)Sometimes Victimized",
+    "Victimized" = "as.factor(LatentClass)Victimized"
+  ),
+  legend.title = "Performance Domain", 
+  scale = TRUE, 
+  model.names = c("Math Performance", "Science Performance")
+) +
+  labs(
+    x = "Regression Estimate",
+    y = "Victimization Class",
+    title = "Outcome Analysis for the PSM Weighted Groups"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),   
+    axis.title.x = element_text(size = 12, face = "bold"), 
+    axis.title.y = element_text(size = 12, face = "bold"), 
+    axis.text.x = element_text(size = 10, face = "bold"),
+    axis.text.y = element_text(size = 10, face = "bold"),  
+    legend.title = element_text(size = 12, face = "bold"), 
+    legend.text = element_text(size = 10, face = "bold")  
+  )
+my_reg_plot
+
+```
+
+
+
+
+# Insights
+
+This study offers evidence that peer victimization may negatively impact academic performance. The findings suggest that even occasional victimization is associated with lower achievement, underscoring the importance of early identification and support. These results indicate that peer victimization is not merely a social-emotional issue, but a potential academic risk factor.
+
+
+## Policy Implications
+
+- **Comprehensive Screening**: Establish systematic, school-wide screening protocols to detect all levels of peer victimization, from occasional incidents to chronic patterns.
+- **Tiered Intervention Framework**: Adopt a multi-tiered system of support (MTSS) that aligns intervention intensity with students’ victimization risk profiles, ensuring resources are allocated efficiently and equitably.
+- **Integrated Academic Recovery**: Combine academic support services—such as tutoring and enrichment—with anti-bullying efforts to address the full impact of victimization on learning outcomes.
+- **Data-Driven Decision-Making**: Incorporate peer victimization indicators into early warning systems and MTSS data dashboards to proactively identify at-risk students and guide timely intervention
+
+## Conclusion
+
+Peer victimization has a measurable, negative effect on math and science outcomes. Schools and districts must act to identify, intervene, and support impacted students—both socially and academically.
+
+
+
+# References
+
+Austin, P. C. (2011). An introduction to propensity score methods for reducing the effects of confounding in observational studies. Multivariate Behavioral Research, 46(3), 399–424. https://doi.org/10.1080/00273171.2011.568786
+
+Espelage, D. L., Hong, J. S., Rao, M. A., & Low, S. (2013). Associations between peer victimization and academic performance. Theory Into Practice, 52(4), 233–240. https://doi.org/10.1080/00405841.2013.829727
+
+Juvonen, J., & Graham, S. (2014). Bullying in schools: The power of bullies and the plight of victims. Annual Review of Psychology, 65, 159–185. https://doi.org/10.1146/annurev-psych-010213-115030
+
+Lanza, S. T., Flaherty, B. P., & Collins, L. M. (2003). Latent class and latent transition analysis. In J. A. Schinka & W. F. Velicer (Eds.), Handbook of psychology: Volume 2. Research methods in psychology (pp. 663–685). Wiley.
+
+Nakamoto, J., & Schwartz, D. (2010). Is peer victimization associated with academic achievement? A meta-analytic review. Social Development, 19(2), 221–242. https://doi.org/10.1111/j.1467-9507.2009.00539.x
+
+Nylund, K. L., Bellmore, A., Nishina, A., & Graham, S. (2007). Subtypes, severity, and structural stability of peer victimization: What does latent class analysis say? Child Development, 78(6), 1706–1722. https://doi.org/10.1111/j.1467-8624.2007.01097.x
+
+Rosenbaum, P. R., & Rubin, D. B. (1983). The central role of the propensity score in observational studies for causal effects. Biometrika, 70(1), 41–55. https://doi.org/10.1093/biomet/70.1.41
+
+Wang, J., Iannotti, R. J., & Nansel, T. R. (2009). School bullying among adolescents in the United States: Physical, verbal, relational, and cyber. Journal of Adolescent Health, 45(4), 368–375. https://doi.org/10.1016/j.jadohealth.2009.03.021
+
+
+
+
