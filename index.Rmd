@@ -1,5 +1,5 @@
 ---
-title: "Causal Inference Using Propensity Score Method"
+title: "<span id='page-title'>Causal Inference Using Propensity Score Method</span>"
 author: "Wondimu Ahmed, Ph.D."
 output:
   rmdformats::readthedown
@@ -675,4 +675,15 @@ Wang, J., Iannotti, R. J., & Nansel, T. R. (2009). School bullying among adolesc
 
 
 
+
+<a href="#page-title" style="font-size: 20px; font-weight: bold; color: white; position: fixed; right: 20px; bottom: 20px; 
+background-color: green; padding: 10px 15px; border-radius: 5px; box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2); text-decoration: none;">
+    Back to Top
+</a>
+
+
+
+<a href="https://wondimuahmed.github.io/Portfolio/" style="font-size: 20px; font-weight: bold; color:white; position: fixed; left: 20%; bottom: 20px; background-color: #007BFF; padding: 10px 15px; border-radius: 5px; box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2); text-decoration: none;">
+    Back to Portfolio
+</a>
 
