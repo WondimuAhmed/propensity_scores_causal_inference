@@ -644,10 +644,10 @@ This study offers evidence that peer victimization may negatively impact academi
 
 ## Policy Implications
 
-- **Comprehensive Screening**: Establish systematic, school-wide screening protocols to detect all levels of peer victimization, from occasional incidents to chronic patterns.
-- **Tiered Intervention Framework**: Adopt a multi-tiered system of support (MTSS) that aligns intervention intensity with students’ victimization risk profiles, ensuring resources are allocated efficiently and equitably.
-- **Integrated Academic Recovery**: Combine academic support services—such as tutoring and enrichment—with anti-bullying efforts to address the full impact of victimization on learning outcomes.
-- **Data-Driven Decision-Making**: Incorporate peer victimization indicators into early warning systems and MTSS data dashboards to proactively identify at-risk students and guide timely intervention
+- **Establish** systematic, school-wide screening protocols to detect all levels of peer victimization, from occasional incidents to chronic patterns.
+- **Adopt** a multi-tiered system of support (MTSS) that aligns intervention intensity with students’ victimization risk profiles, ensuring resources are allocated efficiently and equitably.
+- **Combine** academic support services—such as tutoring and enrichment—with anti-bullying efforts to address the full impact of victimization on learning outcomes.
+- **Incorporate** peer victimization indicators into early warning systems and MTSS data dashboards to proactively identify at-risk students and guide timely intervention
 
 ## Conclusion
 
