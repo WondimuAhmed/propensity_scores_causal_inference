@@ -653,7 +653,12 @@ This study offers evidence that peer victimization may negatively impact academi
 
 Peer victimization has a measurable, negative effect on math and science outcomes. Schools and districts must act to identify, intervene, and support impacted students—both socially and academically.
 
+# View Source Code on GitHub
 
+<a href="https://github.com/WondimuAhmed/propensity_scores_causal_inference" style="font-size: 20px; font-weight: bold; color: white; 
+background-color: red; padding: 10px 15px; border-radius: 5px; box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2); text-decoration: none;">
+    Source Code
+</a>
 
 # References
 
@@ -672,6 +677,9 @@ Nylund, K. L., Bellmore, A., Nishina, A., & Graham, S. (2007). Subtypes, severit
 Rosenbaum, P. R., & Rubin, D. B. (1983). The central role of the propensity score in observational studies for causal effects. Biometrika, 70(1), 41–55. https://doi.org/10.1093/biomet/70.1.41
 
 Wang, J., Iannotti, R. J., & Nansel, T. R. (2009). School bullying among adolescents in the United States: Physical, verbal, relational, and cyber. Journal of Adolescent Health, 45(4), 368–375. https://doi.org/10.1016/j.jadohealth.2009.03.021
+
+
+
 
 
 
